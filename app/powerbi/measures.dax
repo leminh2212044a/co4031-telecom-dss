@@ -1,0 +1,117 @@
+// ======================================================================
+// CO4031 - TELECOM DSS | Power BI Measures (app/powerbi/measures.dax)
+// Dán từng measure vào: Modeling > New measure. Tên bảng theo hướng dẫn trong README.md:
+//   Churn        = edw.vw_bi_churn_scored (hoặc telecom_bi_churn_analytics.csv + ml_customer_scores.csv)
+//   WhatIfGrid   = whatif_policy_grid
+//   WhatIfSeg    = whatif_policy_segment
+// ======================================================================
+
+// ---------- 1. KPI cơ bản (Data Mart BI) ----------
+Customers = COUNTROWS ( Churn )
+
+Churned = SUM ( Churn[churn_flag] )
+
+Churn Rate = DIVIDE ( [Churned], [Customers] )
+
+MRR = SUM ( Churn[monthly_charges] )
+
+Revenue at Risk = SUMX ( Churn, Churn[monthly_charges] * Churn[churn_flag] )
+
+Revenue at Risk % = DIVIDE ( [Revenue at Risk], [MRR] )
+
+Avg Monthly Charges = AVERAGE ( Churn[monthly_charges] )
+
+Avg Tenure = AVERAGE ( Churn[tenure_months] )
+
+Avg CLV Proxy = AVERAGE ( Churn[clv_proxy] )
+
+// So sánh với toàn công ty, bỏ qua mọi Slice/Dice đang chọn
+Churn Rate (All) = CALCULATE ( [Churn Rate], ALL ( Churn ) )
+
+Churn Rate vs Company = [Churn Rate] - [Churn Rate (All)]
+
+// ---------- 2. Kết quả MBMS (ml_customer_scores) ----------
+Avg Churn Probability = AVERAGE ( Churn[churn_probability] )
+
+Expected Churners = SUM ( Churn[churn_probability] )
+
+Expected MRR at Risk = SUM ( Churn[expected_mrr_at_risk] )
+
+Active Customers = CALCULATE ( [Customers], Churn[churn_flag] = 0 )
+
+High Risk Active Customers =
+CALCULATE (
+    [Customers],
+    Churn[churn_flag] = 0,
+    Churn[risk_tier] IN { "High", "Critical" }
+)
+
+// Top-K ưu tiên giữ chân: dùng cùng What-If Parameter "Top K" (xem README)
+In Top K = IF ( MAX ( Churn[priority_rank] ) <= [Top K Value], 1, 0 )
+
+// ---------- 3. What-If dựa trên lưới mô phỏng của model ----------
+// Cần What-If Parameter "Policy Pct" (0..100, bước 10) và slicer chọn WhatIfGrid[lever]
+Selected Lever = SELECTEDVALUE ( WhatIfGrid[lever], "contract_migration" )
+
+WI Avg Churn =
+LOOKUPVALUE (
+    WhatIfGrid[avg_churn_probability],
+    WhatIfGrid[lever], [Selected Lever],
+    WhatIfGrid[pct], [Policy Pct Value]
+)
+
+WI Baseline Churn =
+LOOKUPVALUE (
+    WhatIfGrid[avg_churn_probability],
+    WhatIfGrid[lever], [Selected Lever],
+    WhatIfGrid[pct], 0
+)
+
+WI Delta Churn (pp) = ( [WI Avg Churn] - [WI Baseline Churn] ) * 100
+
+WI Expected Churners =
+LOOKUPVALUE (
+    WhatIfGrid[expected_churners],
+    WhatIfGrid[lever], [Selected Lever],
+    WhatIfGrid[pct], [Policy Pct Value]
+)
+
+WI Customers Saved =
+- LOOKUPVALUE (
+    WhatIfGrid[delta_churners],
+    WhatIfGrid[lever], [Selected Lever],
+    WhatIfGrid[pct], [Policy Pct Value]
+)
+
+WI Retained MRR Gain =
+LOOKUPVALUE (
+    WhatIfGrid[delta_retained_mrr],
+    WhatIfGrid[lever], [Selected Lever],
+    WhatIfGrid[pct], [Policy Pct Value]
+)
+
+// Theo loại hợp đồng (dùng trong visual có trục WhatIfSeg[contract_type])
+WI Seg Scenario Churn =
+CALCULATE (
+    AVERAGE ( WhatIfSeg[scenario_churn] ),
+    WhatIfSeg[lever] = [Selected Lever],
+    WhatIfSeg[pct] = [Policy Pct Value]
+)
+
+WI Seg Baseline Churn =
+CALCULATE (
+    AVERAGE ( WhatIfSeg[baseline_churn] ),
+    WhatIfSeg[lever] = [Selected Lever],
+    WhatIfSeg[pct] = [Policy Pct Value]
+)
+
+// ---------- 4. What-If thuần DAX (giảm giá cước) ----------
+// What-If Parameter "Price Change Pct" (-30..30). Đây là phép tính số học, không chạy model:
+// giả định tỷ lệ churn giữ nguyên, chỉ xem tác động lên doanh thu.
+MRR After Price Change = [MRR] * ( 1 + [Price Change Pct Value] / 100 )
+
+Expected Retained MRR After Price Change =
+SUMX (
+    Churn,
+    Churn[monthly_charges] * ( 1 + [Price Change Pct Value] / 100 ) * ( 1 - Churn[churn_probability] )
+)
