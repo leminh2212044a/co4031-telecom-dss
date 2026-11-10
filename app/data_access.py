@@ -1,8 +1,3 @@
-"""
-CO4031 - TELECOM DSS | Phase 3
-Module: Tầng truy cập Kho dữ liệu & Động cơ OLAP (app/data_access.py)
-
-
 from __future__ import annotations
 
 import warnings
